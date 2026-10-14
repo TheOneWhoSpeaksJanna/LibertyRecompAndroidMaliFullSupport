@@ -96,6 +96,8 @@ jobs:
           bash os/android/scripts/build_driver_proxy.sh
 
       - name: Build native runtime with debug symbols
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
