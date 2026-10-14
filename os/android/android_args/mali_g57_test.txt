@@ -1,0 +1,22 @@
+# Experimental Redmi Note 14 Pro 4G / Mali-G57 MC2 test profile.
+# Not a fix for native SIGSEGV or missing guest audio frames.
+# Back up Android/data/com.libertyrecomp/files/args.txt first.
+# Copy individual settings into args.txt for A/B comparisons.
+# Some settings require the game process to restart.
+--log_level=warn
+--gta4_output_height_cap=720
+--gta4_native_upscaler=fsr1
+--gta4_fsr1_quality=balanced
+--gta4_native_anti_aliasing=off
+--gta4_frame_limit=30
+--gta4_present_mode=vsync
+--gta4_dynamic_draw_distance=true
+--gta4_dynamic_draw_distance_min=0.70
+--gta4_reflection_capture_distance=near
+--gta4_reflection_aa=off
+--gta4_traffic_density_scale=0.4
+--gta4_parked_car_density_scale=0.4
+--gta4_ped_density_scale=0.4
+--gta4_scenario_ped_density_scale=0.4
+--gta4_native_max_queued_frames=3
+--audio_maxqframes=48
