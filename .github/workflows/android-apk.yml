@@ -85,6 +85,7 @@ jobs:
 
       - name: Fetch pinned source dependencies and apply patches
         run: |
+          git config --global core.longpaths true
           python tools/setup_repo.py
           python tools/setup_repo.py --check
 
