@@ -11,6 +11,9 @@
 #pragma once
 
 #include <charconv>
+#include <cstdlib>
+#include <system_error>
+#include <type_traits>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -106,6 +109,21 @@ inline T ifs(const std::string_view value, bool force_hex) {
   return result;
 }
 
+// Android libc++ in the NDK does not provide floating-point from_chars
+// on all supported toolchains. Parse a bounded token with strtof/strtod.
+template <typename T>
+inline std::from_chars_result parse_float(const char* first, const char* last, T& out) {
+  std::string token(first, last);
+  char* end = nullptr;
+  if constexpr (std::is_same_v<T, float>) {
+    out = std::strtof(token.c_str(), &end);
+  } else {
+    out = std::strtod(token.c_str(), &end);
+  }
+  if (end == token.c_str()) return {first, std::errc::invalid_argument};
+  return {first + (end - token.c_str()), std::errc{}};
+}
+
 // floating_point_from_string
 template <typename T, typename PUN>
 inline T fpfs(const std::string_view value, bool force_hex) {
@@ -133,8 +151,7 @@ inline T fpfs(const std::string_view value, bool force_hex) {
     }
     std::memcpy(&result, &pun, sizeof(PUN));
   } else {
-    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
-                                      std::chars_format::general);
+    auto [p, error] = parse_float(range.data(), range.data() + range.size(), result);
     // TODO(gibbed): do something more with errors?
     if (error != std::errc()) {
       assert_always();
@@ -253,7 +270,7 @@ inline vec128_t from_string<vec128_t>(const std::string_view value, bool force_h
         assert_always();
         return vec128_t();
       }
-      auto result = std::from_chars(p, end, v.f32[i], std::chars_format::general);
+      auto result = detail::parse_float(p, end, v.f32[i]);
       if (result.ec != std::errc()) {
         assert_always();
         return vec128_t();
