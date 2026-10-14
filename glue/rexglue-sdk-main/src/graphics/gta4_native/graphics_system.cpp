@@ -6479,7 +6479,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           bound.read_epoch = read_epoch;
           const auto mark_read = [read_epoch](const NativeTextureResource* resource) {
             if (resource)
-              std::atomic_ref(resource->assembly_read_epoch).store(read_epoch, std::memory_order_relaxed);
+              __atomic_store_n(&resource->assembly_read_epoch, read_epoch, __ATOMIC_RELAXED);
           };
           for (const auto& texture : assembled.textures) {
             if (!texture) continue;
@@ -31231,7 +31231,7 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       if (pipelined_recording_ && frame_constant_bound_.valid && frame_constant_bound_.read_epoch &&
           REXCVAR_GET(gta4_native_assembled_frame_scans)) {
         // A later frame's stamp only makes this conservative (an extra resolve).
-        read = std::atomic_ref(frontbuffer->assembly_read_epoch).load(std::memory_order_relaxed) >=
+        read = __atomic_load_n(&frontbuffer->assembly_read_epoch, __ATOMIC_RELAXED) >=
                frame_constant_bound_.read_epoch;
       } else for (const NativeCommand& scan : current_frame_) {
         for (const auto& texture : scan.textures) {
