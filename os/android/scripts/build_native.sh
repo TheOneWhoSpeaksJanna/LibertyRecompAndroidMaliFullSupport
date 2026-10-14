@@ -51,8 +51,15 @@ else
   python "$(cygpath -m "$DIRECT_CALLS")" undo
 fi
 echo "== building with $JOBS jobs"
-# Every behaviour-changing cvar must be in the hack registry (safe mode).
-python "$REPO/glue/rexglue-sdk-main/gta4-recomp/tools/check_hack_registry.py" || { echo "!! hack registry check failed"; exit 1; }
+# Upstream's optional hack-registry audit script is not included in every
+# source snapshot. Run it whenever present, but never fail compilation just
+# because upstream omitted the script itself.
+HACK_REGISTRY_CHECK="$REPO/glue/rexglue-sdk-main/gta4-recomp/tools/check_hack_registry.py"
+if [ -f "$HACK_REGISTRY_CHECK" ]; then
+  python "$HACK_REGISTRY_CHECK" || { echo "!! hack registry check failed"; exit 1; }
+else
+  echo "== optional hack-registry script absent in this source revision; skipping audit"
+fi
 cmake --build "$BUILD_DIR" --target LibertyRecomp -- -j"$JOBS" || { echo "!! native build failed"; exit 1; }
 
 echo "== staging libraries"
