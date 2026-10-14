@@ -45,6 +45,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -267,6 +269,21 @@ public class LauncherActivity extends Activity {
         LinearLayout.LayoutParams perfParams = new LinearLayout.LayoutParams(dp(260), dp(44));
         perfParams.topMargin = dp(10);
         left.addView(perfTest, perfParams);
+
+        Button applyMali = button("Apply Mali-G57 test profile", false);
+        applyMali.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Experimental Mali-G57 settings")
+                .setMessage("This backs up your args.txt, then applies lower-resolution " +
+                        "rendering, lighter reflections and additional audio buffering. " +
+                        "It does not guarantee a crash, audio or cutscene fix. " +
+                        "Restart the game after applying.")
+                .setPositiveButton("Apply", (dialog, which) -> applyMaliProfile())
+                .setNegativeButton("Cancel", null).show());
+        left.addView(applyMali, matchWrap(dp(8)));
+
+        Button restoreMali = button("Restore previous settings", false);
+        restoreMali.setOnClickListener(v -> restoreMaliProfile());
+        left.addView(restoreMali, matchWrap(dp(6)));
 
         TextView debugNote = text("The debug log is saved to Android/data/" + getPackageName()
                 + "/files/" + DebugLog.DIRECTORY + "/. Attach the newest one when you open an issue "
@@ -767,6 +784,82 @@ public class LauncherActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------- Mali test profile
+
+    private File maliSettingsBackup() {
+        return new File(mDataRoot, "args.before-mali.txt");
+    }
+
+    private void applyMaliProfile() {
+        File args = new File(mDataRoot, "args.txt");
+        File backup = maliSettingsBackup();
+        try {
+            // Keep the very first original configuration, even if the test
+            // profile is applied repeatedly. An empty backup means no file
+            // existed and restoring will recreate the application defaults.
+            if (!backup.exists()) {
+                if (args.isFile()) {
+                    Files.copy(args.toPath(), backup.toPath());
+                } else {
+                    Files.write(backup.toPath(), new byte[0]);
+                }
+            }
+            List<String> current = args.isFile()
+                    ? new ArrayList<>(Files.readAllLines(args.toPath(), StandardCharsets.UTF_8))
+                    : new ArrayList<>();
+            try (BufferedReader profile = new BufferedReader(new InputStreamReader(
+                    getAssets().open("mali_g57_test.txt"), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = profile.readLine()) != null) {
+                    String option = line.trim();
+                    if (!option.startsWith("--") || !option.contains("=")) continue;
+                    String prefix = option.substring(0, option.indexOf('=') + 1);
+                    boolean found = false;
+                    for (int i = 0; i < current.size(); i++) {
+                        if (!current.get(i).trim().startsWith(prefix)) continue;
+                        if (!found) {
+                            current.set(i, option);
+                            found = true;
+                        } else {
+                            current.remove(i--);
+                        }
+                    }
+                    if (!found) current.add(option);
+                }
+            }
+            Files.write(args.toPath(), current, StandardCharsets.UTF_8);
+            // Unlike Turnip, this is the Vulkan driver the Mali hardware
+            // actually exposes. The user may select another driver later.
+            writeDriverMode(DriverBridge.SYSTEM);
+            refreshDrivers();
+            toast("Mali profile saved. Restart the game.");
+        } catch (IOException e) {
+            Log.e(TAG, "applying Mali profile failed", e);
+            toast("Could not save settings: " + e.getMessage());
+        }
+    }
+
+    private void restoreMaliProfile() {
+        File backup = maliSettingsBackup();
+        if (!backup.isFile()) {
+            toast("No saved previous settings found.");
+            return;
+        }
+        File args = new File(mDataRoot, "args.txt");
+        try {
+            if (backup.length() == 0) {
+                Files.deleteIfExists(args.toPath());
+            } else {
+                Files.copy(backup.toPath(), args.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.delete(backup.toPath());
+            toast("Previous settings restored. Restart the game.");
+        } catch (IOException e) {
+            Log.e(TAG, "restoring previous settings failed", e);
+            toast("Could not restore settings: " + e.getMessage());
+        }
+    }
+
     // ---------------------------------------------------------------- drivers
 
     private File customRoot() {
@@ -782,7 +875,7 @@ public class LauncherActivity extends Activity {
         addDriver(DriverBridge.TURNIP, "Turnip 26.3.0-R6 (bundled)",
                 "Recommended for Adreno 6xx/7xx");
         addDriver(DriverBridge.SYSTEM, "System driver",
-                "The device's own Vulkan driver (needs Vulkan 1.2)");
+                "Recommended for Mali: device Vulkan driver (needs Vulkan 1.2)");
         File[] packages = customRoot().listFiles();
         if (packages != null) {
             Arrays.sort(packages);
@@ -842,7 +935,11 @@ public class LauncherActivity extends Activity {
 
     private String currentDriverMode() {
         String line = readFirstLine(new File(mDataRoot, "driver.txt"));
-        if (line == null) return DriverBridge.TURNIP;
+        // Match the runtime's non-Adreno automatic fallback in the picker UI.
+        if (line == null) {
+            return new File("/dev/kgsl-3d0").exists() || new File("/sys/class/kgsl").exists()
+                    ? DriverBridge.TURNIP : DriverBridge.SYSTEM;
+        }
         String lower = line.toLowerCase(Locale.ROOT);
         if (lower.equals(DriverBridge.SYSTEM)) return DriverBridge.SYSTEM;
         if (lower.startsWith(DriverBridge.CUSTOM_PREFIX)) {

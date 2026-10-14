@@ -75,12 +75,12 @@ final class DriverBridge {
             return sStatus;
         }
         String nativeDir = context.getApplicationInfo().nativeLibraryDir;
-        // The bundled Turnip drives only Adreno (KGSL) GPUs. On anything else
-        // (Mali, for example) go straight to the device's own driver instead
-        // of loading one that cannot work. An imported driver is the user's
-        // explicit choice (PanVK drives Mali) and is still tried.
-        if (TURNIP.equals(mode) && !new File("/dev/kgsl-3d0").exists()
-                && !new File("/sys/class/kgsl").exists()) {
+        // Turnip targets Adreno/KGSL only. The stock Mali-G57 Vulkan
+        // implementation is the working backend; there is no verified PanVK
+        // Vulkan replacement for this model.
+        final boolean hasKgsl = new File("/dev/kgsl-3d0").exists()
+                || new File("/sys/class/kgsl").exists();
+        if (TURNIP.equals(mode) && !hasKgsl) {
             Log.i(TAG, "no Adreno GPU (no KGSL device), using the system driver instead of " + mode);
             mode = SYSTEM;
         }
@@ -95,9 +95,11 @@ final class DriverBridge {
                 custom = true;
                 Log.i(TAG, "custom driver " + name + " library=" + library);
             } catch (IOException | RuntimeException e) {
-                Log.e(TAG, "custom driver unusable, using the bundled Turnip", e);
-                mode = TURNIP;
-                custom = true;
+                // Don't try a second incompatible driver on a Mali phone.
+                // The original system Vulkan driver remains the safe fallback.
+                Log.e(TAG, "custom driver unusable, falling back to the GPU-compatible driver", e);
+                mode = hasKgsl ? TURNIP : SYSTEM;
+                custom = hasKgsl;
             }
         }
         if (custom && LIBRARY.equals(library)) {

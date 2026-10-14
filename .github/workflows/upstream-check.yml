@@ -1,0 +1,44 @@
+name: Check upstream updates
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Compare fork main with vaduur/main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch upstream without modifying fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/vaduur/LibertyRecompAndroid.git
+          git fetch --no-tags upstream main
+          behind="$(git rev-list --count HEAD..upstream/main)"
+          ahead="$(git rev-list --count upstream/main..HEAD)"
+          {
+            echo "## Upstream status"
+            echo ""
+            echo "- Fork: TheOneWhoSpeaksJanna/LibertyRecompAndroidMaliFullSupport"
+            echo "- Upstream: vaduur/LibertyRecompAndroid"
+            echo "- Upstream commits not yet in this fork: **$behind**"
+            echo "- Fork-only commits: **$ahead**"
+            echo ""
+            echo "This workflow never merges or overwrites custom code."
+            echo "Review the upstream diff and merge only after testing the Android APK."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$behind" -gt 0 ]; then
+            echo "::notice title=Upstream updates available::$behind new commits. Review before merging."
+            git log --oneline --max-count=15 HEAD..upstream/main
+          else
+            echo "Fork already contains upstream/main."
+          fi
