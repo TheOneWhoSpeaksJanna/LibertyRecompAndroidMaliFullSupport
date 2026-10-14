@@ -1,0 +1,133 @@
+name: Android arm64 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, mali-foundation]
+    paths:
+      - '.github/workflows/android-apk.yml'
+      - 'os/android/**'
+      - 'glue/**'
+      - 'LibertyRecomp/**'
+      - 'LibertyRecompLib/**'
+      - 'toolchains/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-apk.yml'
+      - 'os/android/**'
+      - 'glue/**'
+      - 'LibertyRecomp/**'
+      - 'LibertyRecompLib/**'
+      - 'toolchains/**'
+      - 'tools/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build arm64 debug APK with native symbols
+    runs-on: windows-2022
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install CMake and Ninja
+        run: python -m pip install 'cmake>=3.29,<5' ninja
+
+      - name: Install SDK platform, build tools and Android NDK r29
+        shell: pwsh
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;29.0.14206865"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Print toolchain versions
+        run: |
+          python --version
+          cmake --version
+          ninja --version
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Fetch pinned source dependencies and apply patches
+        run: |
+          python tools/setup_repo.py
+          python tools/setup_repo.py --check
+
+      - name: Compile Vulkan driver proxy
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          bash os/android/scripts/build_driver_proxy.sh
+
+      - name: Build native runtime with debug symbols
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          STRIP=0 bash os/android/scripts/build_native.sh 2
+
+      - name: Package debug APK
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          rm -f os/android/app/build/outputs/apk/debug/app-debug.apk
+          bash os/android/scripts/build_apk.sh debug
+
+      - name: Verify APK
+        run: |
+          test -s os/android/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum os/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LibertyRecompAndroid-arm64-debug-${{ github.sha }}
+          path: os/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload native build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-diagnostics-${{ github.run_id }}
+          path: |
+            out/build/android-arm64/CMakeFiles/CMakeConfigureLog.yaml
+            out/build/android-arm64/CMakeCache.txt
+            out/build/android-driver-proxy/CMakeFiles/CMakeConfigureLog.yaml
+            os/android/app/build/reports/**
+          if-no-files-found: ignore
+          retention-days: 7
