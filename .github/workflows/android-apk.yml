@@ -39,6 +39,9 @@ jobs:
     name: Build arm64 debug APK with native symbols
     runs-on: windows-2022
     timeout-minutes: 300
+    env:
+      SCCACHE_GHA_ENABLED: 'on'
+      SCCACHE_GHA_VERSION: 'android-arm64-ndk29-v1'
     defaults:
       run:
         shell: bash
@@ -75,6 +78,9 @@ jobs:
           sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;29.0.14206865"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Enable shared C/C++ compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Print toolchain versions
         run: |
           python --version
@@ -101,7 +107,12 @@ jobs:
         run: |
           export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          STRIP=0 bash os/android/scripts/build_native.sh 2
+          STRIP=0 bash os/android/scripts/build_native.sh 3
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: |
+          if command -v sccache >/dev/null 2>&1; then sccache --show-stats; fi
 
       - name: Package debug APK
         run: |

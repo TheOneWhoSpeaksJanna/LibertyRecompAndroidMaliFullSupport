@@ -20,6 +20,11 @@ python "$APP_DIR/scripts/materialize_symlinks.py"
 CPU_FLAGS="-march=armv8.2-a -fno-emulated-tls"
 if [ ! -f "$BUILD_DIR/build.ninja" ] || ! grep -q -- "-fno-emulated-tls" "$BUILD_DIR/CMakeCache.txt"; then
   echo "== configuring $BUILD_TYPE in $BUILD_DIR"
+  CACHE_LAUNCHER_FLAGS=()
+  if command -v sccache >/dev/null 2>&1; then
+    echo "== using persistent sccache compiler cache"
+    CACHE_LAUNCHER_FLAGS+=( -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache )
+  fi
   cmake -S "$REPO" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_C_FLAGS="$CPU_FLAGS" \
     -DCMAKE_CXX_FLAGS="$CPU_FLAGS" \
@@ -35,7 +40,8 @@ if [ ! -f "$BUILD_DIR/build.ninja" ] || ! grep -q -- "-fno-emulated-tls" "$BUILD
     -DREXGLUE_ENABLE_TRACY=OFF \
     -DGTA4_NATIVE_SPIRV_VAL="$(cygpath -m "$ANDROID_NDK/shader-tools/windows-x86_64/spirv-val.exe")" \
     -DGTA4_NATIVE_GLSLANG_VALIDATOR="$(cygpath -m "$REPO/out/host-tools/glslang/bin/glslangValidator.exe")" \
-    -DGTA4_NATIVE_DXC_LIBRARY_PATH="$(cygpath -m "$REPO/out/host-tools/dxc/bin/x64")"
+    -DGTA4_NATIVE_DXC_LIBRARY_PATH="$(cygpath -m "$REPO/out/host-tools/dxc/bin/x64")" \
+    "${CACHE_LAUNCHER_FLAGS[@]}"
 fi
 
 # Calls between unhooked recompiled functions bypass the weak sub_X aliases so
@@ -60,7 +66,7 @@ if [ -f "$HACK_REGISTRY_CHECK" ]; then
 else
   echo "== optional hack-registry script absent in this source revision; skipping audit"
 fi
-cmake --build "$BUILD_DIR" --target LibertyRecomp -- -j"$JOBS" || { echo "!! native build failed"; exit 1; }
+cmake --build "$BUILD_DIR" --target LibertyRecomp -- -j"$JOBS" -k0 || { echo "!! native build failed"; exit 1; }
 
 echo "== staging libraries"
 mkdir -p "$JNILIBS"
