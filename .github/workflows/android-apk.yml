@@ -3,7 +3,7 @@ name: Android arm64 APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, mali-foundation]
+    branches: [main]
     paths:
       - '.github/workflows/android-apk.yml'
       - 'os/android/**'
