@@ -189,17 +189,21 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
 
   std::memcpy(output_frame, input_frame, frame_samples_ * sizeof(float));
 
+  size_t queued_count = 0;
+  {
+    std::lock_guard<std::mutex> guard(frames_mutex_);
+    frames_queued_.push(output_frame);
+    queued_count = frames_queued_.size();
+    PROFILE_BUFFER_QUEUE_DEPTH(static_cast<int64_t>(queued_count));
+  }
+
+  // Inspecting std::queue::size without the mutex is a data race: the SDL
+  // callback concurrently consumes frames on a separate thread.
   static uint32_t sdl_submit_count = 0;
   if (sdl_submit_count < 10) {
     REXAPU_DEBUG("SDLAudioDriver::SubmitFrame: frame_ptr={:08X} queued_count={}", frame_ptr,
-                 frames_queued_.size() + 1);
+                 queued_count);
     sdl_submit_count++;
-  }
-
-  {
-    std::unique_lock<std::mutex> guard(frames_mutex_);
-    frames_queued_.push(output_frame);
-    PROFILE_BUFFER_QUEUE_DEPTH(static_cast<int64_t>(frames_queued_.size()));
   }
 }
 
@@ -293,16 +297,29 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
   static auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (additional_amount > 0) {
     static uint32_t sdl_callback_count = 0;
-    std::unique_lock<std::mutex> guard(driver->frames_mutex_);
+    float* buffer = nullptr;
+    size_t queued_count = 0;
+    {
+      // Keep the producer's lock hold short: SDL_PutAudioStreamData can do
+      // conversion, allocation and resampling, none of which needs this lock.
+      std::lock_guard<std::mutex> guard(driver->frames_mutex_);
+      queued_count = driver->frames_queued_.size();
+      if (!driver->frames_queued_.empty()) {
+        buffer = driver->frames_queued_.front();
+        driver->frames_queued_.pop();
+      }
+    }
+
     if (const auto now = std::chrono::steady_clock::now(); now >= next_report) {
       if (silent_fills) {
         REXAPU_WARN("audio: {} of {} blocks were silence (no guest frame ready), {} queued",
-                    silent_fills, silent_fills + filled, driver->frames_queued_.size());
+                    silent_fills, silent_fills + filled, queued_count);
       }
       silent_fills = filled = 0;
       next_report = now + std::chrono::seconds(10);
     }
-    if (driver->frames_queued_.empty()) {
+
+    if (!buffer) {
       ++silent_fills;
       if (sdl_callback_count < 10) {
         REXAPU_DEBUG("SDLCallback: no frames queued (silence)");
@@ -313,11 +330,8 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
         REXAPU_ERROR("SDL_PutAudioStreamData() failed while filling silence: {}", SDL_GetError());
         break;
       }
-      additional_amount -= len;
     } else {
       ++filled;
-      auto buffer = driver->frames_queued_.front();
-      driver->frames_queued_.pop();
       if (REXCVAR_GET(audio_mute)) {
         std::memset(data, 0, len);
       } else {
@@ -333,17 +347,19 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
             break;
         }
       }
-      if (!SDL_PutAudioStreamData(stream, data, len)) {
-        REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
+      const bool submitted = SDL_PutAudioStreamData(stream, data, len);
+      {
+        std::lock_guard<std::mutex> guard(driver->frames_mutex_);
         driver->frames_unused_.push(buffer);
+      }
+      if (!submitted) {
+        REXAPU_ERROR("SDL_PutAudioStreamData() failed: {}", SDL_GetError());
         break;
       }
-      driver->frames_unused_.push(buffer);
-
       auto ret = driver->semaphore_->Release(1, nullptr);
       assert_true(ret);
-      additional_amount -= len;
     }
+    additional_amount -= len;
   }
   SDL_stack_free(data);
 }
