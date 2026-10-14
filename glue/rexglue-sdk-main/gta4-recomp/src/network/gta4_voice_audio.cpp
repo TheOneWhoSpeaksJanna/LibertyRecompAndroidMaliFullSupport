@@ -39,11 +39,14 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
  public:
   SDLVoiceAudioDevice()
       : lifecycle_signal_(std::make_shared<LifecycleSignal>()),
-        lifecycle_worker_([this](std::stop_token stop_token) { LifecycleWorkerMain(stop_token); }) {
+        lifecycle_worker_([this] { LifecycleWorkerMain(); }) {
   }
 
   ~SDLVoiceAudioDevice() override {
-    lifecycle_worker_.request_stop();
+    {
+      std::lock_guard lock(lifecycle_signal_->mutex);
+      lifecycle_signal_->stop_requested = true;
+    }
     SignalLifecycle(lifecycle_signal_);
     if (lifecycle_worker_.joinable())
       lifecycle_worker_.join();
@@ -200,6 +203,7 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
     std::condition_variable condition;
     bool requested = false;
     bool permission_completed = false;
+    bool stop_requested = false;
   };
 
   static void SDLCALL OnCaptureData(void* userdata, SDL_AudioStream*, int, int) {
@@ -260,7 +264,7 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
     signal->condition.notify_all();
   }
 
-  bool WaitForLifecycle(std::stop_token stop_token) {
+  bool WaitForLifecycle() {
     bool active = false;
     {
       std::lock_guard lock(state_mutex_);
@@ -268,7 +272,7 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
     }
 
     std::unique_lock lock(lifecycle_signal_->mutex);
-    const auto ready = [&] { return stop_token.stop_requested() || lifecycle_signal_->requested; };
+    const auto ready = [&] { return lifecycle_signal_->stop_requested || lifecycle_signal_->requested; };
     if (active) {
       lifecycle_signal_->condition.wait_for(lock, kLifecycleRetryInterval, ready);
     } else {
@@ -279,11 +283,11 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
     lifecycle_signal_->permission_completed = false;
     if (permission_completed)
       permission_request_pending_ = false;
-    return !stop_token.stop_requested();
+    return !lifecycle_signal_->stop_requested;
   }
 
-  void LifecycleWorkerMain(std::stop_token stop_token) {
-    while (WaitForLifecycle(stop_token))
+  void LifecycleWorkerMain() {
+    while (WaitForLifecycle())
       ReconcileLifecycle();
     ShutdownAudio();
   }
@@ -592,7 +596,7 @@ class SDLVoiceAudioDevice final : public rex::system::xam::IVoiceAudioDevice {
   std::string capture_error_;
   std::string playback_error_;
   std::shared_ptr<LifecycleSignal> lifecycle_signal_;
-  std::jthread lifecycle_worker_;
+  std::thread lifecycle_worker_;
 };
 
 class Gta4VoiceSampleCodecState final : public rex::system::xam::IVoiceSampleCodecState {
